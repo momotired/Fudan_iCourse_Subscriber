@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+tools/icourse_video_downloader/.env
 data/*
 !data/icourse.db.enc
 *.mp4

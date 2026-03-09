@@ -18,6 +18,7 @@ from pathlib import Path
 
 TOOL_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = TOOL_DIR.parent.parent
+TOOLS_ROOT = TOOL_DIR.parent
 
 
 def _load_env_file(path: Path, override: bool = False) -> None:
@@ -69,6 +70,142 @@ def _sub_id_sort_key(item: dict) -> tuple[int, str]:
     if sub_id.isdigit():
         return (0, f"{int(sub_id):020d}")
     return (1, sub_id)
+
+
+def _extract_sub_id_from_name(path: Path) -> str | None:
+    """Extract sub_id from local filename stem.
+
+    Supports names like:
+    - 123456.mp4
+    - 123456_lecture-title.mp4
+    - 123456-lecture-title.mp4
+    """
+    stem = path.stem.strip()
+    match = re.match(r"^(\d+)(?:[_-].*)?$", stem)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _scan_downloaded_sub_ids(course_dirs: list[Path]) -> set[str]:
+    """Collect downloaded sub_ids by scanning existing mp4 filenames."""
+    sub_ids = set()
+    for course_dir in course_dirs:
+        if not course_dir.exists() or not course_dir.is_dir():
+            continue
+        for file_path in course_dir.glob("*.mp4"):
+            sub_id = _extract_sub_id_from_name(file_path)
+            if sub_id:
+                sub_ids.add(sub_id)
+    return sub_ids
+
+
+def _resolve_course_dirs(out_dir: Path, course_id: str, course_title: str) -> tuple[Path, list[Path]]:
+    """Return target course dir and all same-course dirs for local scan."""
+    dir_name = f"{course_id}-{_safe_filename(course_title, fallback='course')}"
+    target_dir = out_dir / dir_name
+    same_course_dirs = []
+    if out_dir.exists():
+        for d in out_dir.iterdir():
+            if not d.is_dir():
+                continue
+            if d.name.startswith(f"{course_id}-") or d.name.startswith(f"{course_id}_"):
+                same_course_dirs.append(d)
+    if target_dir not in same_course_dirs:
+        same_course_dirs.append(target_dir)
+    return target_dir, same_course_dirs
+
+
+def _format_size(num_bytes: float) -> str:
+    units = ["B", "KB", "MB", "GB"]
+    value = float(num_bytes)
+    unit_idx = 0
+    while value >= 1024 and unit_idx < len(units) - 1:
+        value /= 1024
+        unit_idx += 1
+    return f"{value:.1f}{units[unit_idx]}"
+
+
+def _format_eta(seconds: float) -> str:
+    if seconds < 0:
+        return "--:--"
+    total = int(seconds)
+    m, s = divmod(total, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h:d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def _download_video_with_progress(client, video_url: str, output_path: Path, chunk_size: int = 1024 * 256) -> Path:
+    """Download one video with progress + speed display."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    start = time.time()
+    last_print = start
+    downloaded = 0
+
+    resp = client.vpn.get(video_url, stream=True, timeout=300)
+    resp.raise_for_status()
+    total = int(resp.headers.get("content-length", 0))
+
+    try:
+        with tmp_path.open("wb") as f:
+            for chunk in resp.iter_content(chunk_size=chunk_size):
+                if not chunk:
+                    continue
+                f.write(chunk)
+                downloaded += len(chunk)
+
+                now = time.time()
+                if now - last_print < 0.5:
+                    continue
+                elapsed = max(now - start, 1e-6)
+                avg_speed = downloaded / elapsed
+                instant_speed = len(chunk) / max(now - last_print, 1e-6)
+
+                if total > 0:
+                    pct = downloaded * 100 / total
+                    remaining = max(total - downloaded, 0)
+                    eta = remaining / max(avg_speed, 1e-6)
+                    msg = (
+                        f"\r      {pct:6.2f}%  "
+                        f"{_format_size(downloaded)}/{_format_size(total)}  "
+                        f"速率 {_format_size(instant_speed)}/s  "
+                        f"均速 {_format_size(avg_speed)}/s  "
+                        f"ETA {_format_eta(eta)}"
+                    )
+                else:
+                    msg = (
+                        f"\r      已下载 {_format_size(downloaded)}  "
+                        f"速率 {_format_size(instant_speed)}/s  "
+                        f"均速 {_format_size(avg_speed)}/s"
+                    )
+                print(msg, end="", flush=True)
+                last_print = now
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+    finally:
+        resp.close()
+
+    elapsed = max(time.time() - start, 1e-6)
+    avg_speed = downloaded / elapsed
+    if total > 0 and downloaded < total:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise RuntimeError(
+            f"Incomplete download: {downloaded}/{total} bytes "
+            f"({downloaded / total:.1%})"
+        )
+
+    os.replace(tmp_path, output_path)
+    print(
+        f"\r      100.00%  {_format_size(downloaded)}/{_format_size(total or downloaded)}  "
+        f"均速 {_format_size(avg_speed)}/s  用时 {_format_eta(elapsed)}"
+    )
+    return output_path
 
 
 def _build_parser(default_env_file: Path, default_out_dir: Path) -> argparse.ArgumentParser:
@@ -143,7 +280,7 @@ def _login_with_retry(webvpn_cls, max_attempts: int):
 
 def main() -> int:
     default_env_file = TOOL_DIR / ".env"
-    default_out_dir = TOOL_DIR / "downloads"
+    default_out_dir = TOOLS_ROOT / "course"
     parser = _build_parser(default_env_file, default_out_dir)
     args = parser.parse_args()
 
@@ -163,7 +300,12 @@ def main() -> int:
         or os.environ.get("DOWNLOAD_DIR", "")
         or str(default_out_dir)
     )
-    out_dir = Path(configured_out_dir).expanduser().resolve()
+    out_dir_path = Path(configured_out_dir).expanduser()
+    if not out_dir_path.is_absolute():
+        out_dir_path = PROJECT_ROOT / out_dir_path
+    out_dir = out_dir_path.resolve()
+    if not args.list_only:
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     if not os.environ.get("StuId") or not os.environ.get("UISPsw"):
         print("Missing StuId/UISPsw. Set them in env file or shell environment.")
@@ -217,8 +359,10 @@ def main() -> int:
         if args.list_only:
             continue
 
-        course_dir_name = f"{course_id}_{_safe_filename(course_title, fallback='course')}"
-        course_dir = out_dir / course_dir_name
+        course_dir, scan_dirs = _resolve_course_dirs(out_dir, course_id, course_title)
+        downloaded_sub_ids = _scan_downloaded_sub_ids(scan_dirs)
+        if downloaded_sub_ids:
+            print(f"  Local downloaded videos (by sub_id scan): {len(downloaded_sub_ids)}")
         course_dir.mkdir(parents=True, exist_ok=True)
 
         for lec in selected:
@@ -227,8 +371,8 @@ def main() -> int:
             safe_title = _safe_filename(sub_title, fallback=sub_id)
             target_path = course_dir / f"{sub_id}_{safe_title}.mp4"
 
-            if target_path.exists() and not args.overwrite:
-                print(f"    [skip] exists: {target_path}")
+            if not args.overwrite and sub_id in downloaded_sub_ids:
+                print(f"    [skip] already downloaded sub_id={sub_id}")
                 total_skipped += 1
                 continue
 
@@ -238,7 +382,7 @@ def main() -> int:
                 print(f"    [fail] no video url for sub_id={sub_id}")
                 continue
 
-            client.download_video(video_url, str(target_path))
+            _download_video_with_progress(client, video_url, target_path)
             total_downloaded += 1
             if args.sleep > 0:
                 time.sleep(args.sleep)

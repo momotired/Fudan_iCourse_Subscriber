@@ -6,6 +6,7 @@ data/*
 !data/icourse.db.enc
 *.mp4
 *.wav
+*.txt
 tests/
 
 # ASR models (downloaded at runtime)

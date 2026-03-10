@@ -79,6 +79,7 @@ class Transcriber:
         Args:
             cmd: ffmpeg command list.
             timeout: Max seconds before killing the process.
+                     Set to <= 0 to disable timeout.
         """
         self._init()
         self._reset_vad()
@@ -116,7 +117,7 @@ class Transcriber:
         try:
             while True:
                 now = time.time()
-                if now - t0 > timeout:
+                if timeout > 0 and now - t0 > timeout:
                     proc.kill()
                     proc.wait()
                     raise TimeoutError(
@@ -261,14 +262,20 @@ class Transcriber:
         self._last_transcript = transcript
         return transcript
 
-    def transcribe_video(self, video_path: str) -> str:
-        """Transcribe a local video file via ffmpeg pipe."""
+    def transcribe_video(self, video_path: str, timeout: int = 7200) -> str:
+        """Transcribe a local video/audio file via ffmpeg pipe.
+
+        Args:
+            video_path: Local media path.
+            timeout: Max seconds before killing the process.
+                     Set to <= 0 to disable timeout.
+        """
         cmd = [
             "ffmpeg", "-i", video_path,
             "-ar", "16000", "-ac", "1",
             "-f", "f32le", "-",
         ]
-        return self._transcribe_from_cmd(cmd)
+        return self._transcribe_from_cmd(cmd, timeout=timeout)
 
     @staticmethod
     def probe_duration(url: str, http_headers: str | None = None,

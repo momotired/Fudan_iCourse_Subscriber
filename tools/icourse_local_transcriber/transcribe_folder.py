@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -57,8 +58,9 @@ def _collect_videos(course_dir: Path, recursive: bool = True) -> list[Path]:
 
 def _extract_audio(video_path: Path, audio_path: Path, audio_format: str, overwrite: bool) -> None:
     audio_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = audio_path.with_suffix(audio_path.suffix + ".tmp")
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
-    cmd += ["-y" if overwrite else "-n"]
+    cmd += ["-y"]
     cmd += ["-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000"]
 
     if audio_format == "wav":
@@ -66,10 +68,15 @@ def _extract_audio(video_path: Path, audio_path: Path, audio_format: str, overwr
     else:
         cmd += ["-c:a", "libmp3lame", "-b:a", "96k"]
 
-    cmd += [str(audio_path)]
+    cmd += [str(tmp_path)]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
+        if tmp_path.exists():
+            tmp_path.unlink()
         raise RuntimeError(result.stderr.strip() or "ffmpeg failed to extract audio")
+    if overwrite and audio_path.exists():
+        audio_path.unlink()
+    tmp_path.replace(audio_path)
 
 
 def _get_worker_transcriber():
@@ -91,6 +98,7 @@ def _process_one(task: dict) -> dict:
     overwrite = bool(task["overwrite"])
     audio_only = bool(task["audio_only"])
     audio_format = task["audio_format"]
+    transcribe_timeout = int(task["transcribe_timeout"])
 
     result = {"video_rel": task["video_rel"], "status": "processed", "message": ""}
 
@@ -112,7 +120,9 @@ def _process_one(task: dict) -> dict:
 
         text_path.parent.mkdir(parents=True, exist_ok=True)
         transcriber = _get_worker_transcriber()
-        transcript = transcriber.transcribe_video(str(audio_path))
+        transcript = transcriber.transcribe_video(
+            str(audio_path), timeout=transcribe_timeout
+        )
         text_path.write_text(transcript, encoding="utf-8")
         result["message"] = f"transcript written: {text_path}"
         return result
@@ -175,7 +185,36 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of worker processes for parallel processing (default: 1).",
     )
+    parser.add_argument(
+        "--transcribe-timeout",
+        type=int,
+        default=0,
+        help=(
+            "Per-file transcription timeout in seconds. "
+            "Use 0 to disable timeout (default: 0)."
+        ),
+    )
     return parser
+
+
+def _print_progress(
+    done: int,
+    total: int,
+    processed: int,
+    skipped: int,
+    failed: int,
+    running: int | None = None,
+    pending: int | None = None,
+) -> None:
+    """Print a compact progress line."""
+    pct = (done * 100.0 / total) if total else 100.0
+    base = (
+        f"[Progress] {done}/{total} ({pct:.1f}%) | "
+        f"processed={processed}, skipped={skipped}, failed={failed}"
+    )
+    if running is not None and pending is not None:
+        base += f", running={running}, pending={pending}"
+    print(base)
 
 
 def main() -> int:
@@ -230,6 +269,7 @@ def main() -> int:
     processed = 0
     skipped = 0
     failed = 0
+    transcribe_timeout = int(args.transcribe_timeout)
 
     tasks = []
     for course_dir in courses:
@@ -253,6 +293,7 @@ def main() -> int:
                     "audio_format": args.audio_format,
                     "overwrite": bool(args.overwrite),
                     "audio_only": bool(args.audio_only),
+                    "transcribe_timeout": transcribe_timeout,
                 }
             )
 
@@ -261,9 +302,16 @@ def main() -> int:
         print(f"\n[Run] parallel mode with {workers} worker processes")
     else:
         print("\n[Run] single-process mode")
+    if transcribe_timeout > 0:
+        print(f"[Run] transcription timeout: {transcribe_timeout}s per file")
+    else:
+        print("[Run] transcription timeout: disabled")
 
-    def _consume(result: dict) -> None:
-        nonlocal processed, skipped, failed
+    total_tasks = len(tasks)
+    done_count = 0
+
+    def _consume(result: dict, running: int | None = None, pending: int | None = None) -> None:
+        nonlocal processed, skipped, failed, done_count
         status = result["status"]
         message = result["message"]
         video_rel = result["video_rel"]
@@ -274,24 +322,70 @@ def main() -> int:
             skipped += 1
         else:
             failed += 1
+        done_count += 1
+        _print_progress(
+            done=done_count,
+            total=total_tasks,
+            processed=processed,
+            skipped=skipped,
+            failed=failed,
+            running=running,
+            pending=pending,
+        )
 
     if workers == 1:
-        for task in tasks:
+        for idx, task in enumerate(tasks, start=1):
+            print(f"[Start {idx}/{total_tasks}] {task['video_rel']}")
             _consume(_process_one(task))
     else:
         with ProcessPoolExecutor(max_workers=workers) as executor:
-            future_to_task = {executor.submit(_process_one, task): task for task in tasks}
-            for future in as_completed(future_to_task):
-                task = future_to_task[future]
-                try:
-                    result = future.result()
-                except Exception as exc:  # noqa: BLE001
-                    result = {
-                        "video_rel": task["video_rel"],
-                        "status": "failed",
-                        "message": f"{type(exc).__name__}: {exc}",
-                    }
-                _consume(result)
+            future_to_task = {
+                executor.submit(_process_one, task): task for task in tasks
+            }
+            heartbeat_last = 0.0
+
+            while future_to_task:
+                done_futures, _ = wait(
+                    list(future_to_task),
+                    timeout=2.0,
+                    return_when=FIRST_COMPLETED,
+                )
+
+                if not done_futures:
+                    now = time.time()
+                    if now - heartbeat_last >= 2.0:
+                        running = sum(
+                            1 for f in future_to_task if f.running()
+                        )
+                        pending = len(future_to_task) - running
+                        _print_progress(
+                            done=done_count,
+                            total=total_tasks,
+                            processed=processed,
+                            skipped=skipped,
+                            failed=failed,
+                            running=running,
+                            pending=pending,
+                        )
+                        heartbeat_last = now
+                    continue
+
+                for future in done_futures:
+                    task = future_to_task.pop(future)
+                    try:
+                        result = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        result = {
+                            "video_rel": task["video_rel"],
+                            "status": "failed",
+                            "message": f"{type(exc).__name__}: {exc}",
+                        }
+                    running = sum(
+                        1 for f in future_to_task if f.running()
+                    )
+                    pending = len(future_to_task) - running
+                    _consume(result, running=running, pending=pending)
+                heartbeat_last = time.time()
 
     print("\n[Done]")
     print(f"  total videos: {total_videos}")

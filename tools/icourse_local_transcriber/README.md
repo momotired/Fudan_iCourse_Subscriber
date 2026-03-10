@@ -6,6 +6,10 @@
 2. 将视频转成音频文件，并转写为文本
 
 本工具复用仓库内的 `src/transcriber.py`（SenseVoice + silero VAD）。
+运行处理时会实时输出进度，例如：
+
+- ` [Start 3/10] ... `：当前开始处理的第几个视频
+- ` [Progress] 4/10 (40.0%) ... `：总进度（processed/skipped/failed）
 
 ## 目录结构（输出）
 
@@ -72,6 +76,15 @@ python tools/icourse_local_transcriber/transcribe_folder.py tools/course --list-
 python tools/icourse_local_transcriber/transcribe_folder.py tools/course --workers 4
 ```
 
+### 6) 长视频建议关闭转写超时并重跑
+
+```bash
+python tools/icourse_local_transcriber/transcribe_folder.py tools/course \
+  --workers 4 \
+  --transcribe-timeout 0 \
+  --overwrite
+```
+
 ## 参数
 
 ```text
@@ -84,4 +97,5 @@ icourse_dir       课程根目录（必填）
 --list-only       仅列出视频，不处理
 --non-recursive   每个课程目录仅扫描一层
 --workers         并发进程数（默认 1）
+--transcribe-timeout  单文件转写超时秒数，0 表示不超时（默认 0）
 ```

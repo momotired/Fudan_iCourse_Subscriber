@@ -22,9 +22,13 @@ get_course_text/
 
 docs/*
 !docs/*.png
+!docs/frontend-readme.md
 
 *.mp3
 bugs.md
 
 # Local DB viewer tool
 db-viewer/
+
+.claude/
+# .github/

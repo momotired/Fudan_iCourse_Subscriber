@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>iCourse Subscriber</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- KaTeX CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="bg-gray-50 min-h-[100dvh]" x-data="app()" x-cloak>
+
+<!-- ╔══════════════════════════════════════════════════════╗
+     ║  UNIFIED BAR                                         ║
+     ║  Mobile: header only (nav stays at bottom)          ║
+     ║  Desktop: single bar = header + tabs merged         ║
+     ╚══════════════════════════════════════════════════════╝ -->
+<header x-show="!['setup','edit'].includes(view)"
+        class="sticky top-0 z-30 bg-white border-b border-gray-200 px-4 flex items-center justify-between h-14">
+
+  <!-- Left: back arrow or logo -->
+  <div class="flex items-center gap-2 min-w-0">
+    <button x-show="['lectures','detail','settings'].includes(view)"
+            @click="goBack()" class="p-1 -ml-1 text-gray-600 hover:text-gray-900 flex-shrink-0">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+      </svg>
+    </button>
+    <h1 class="text-base font-bold text-gray-800 truncate" x-text="
+      view === 'lectures' ? currentCourse?.title :
+      view === 'detail'   ? currentLecture?.sub_title :
+      view === 'settings' ? 'Settings' :
+      'iCourse'
+    "></h1>
+  </div>
+
+  <!-- Desktop center/right: tab nav (hidden on mobile — bottom nav handles it) -->
+  <div class="hidden md:flex items-center gap-1 ml-6">
+    <button @click="_go('courses')"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+            :class="['courses','lectures','detail'].includes(view)
+              ? 'bg-blue-50 text-blue-600'
+              : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
+      </svg>
+      Courses
+    </button>
+    <button @click="_go('search')"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+            :class="view === 'search'
+              ? 'bg-blue-50 text-blue-600'
+              : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      Search
+    </button>
+    <button @click="openSettings()"
+            class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+            :class="view === 'settings'
+              ? 'bg-blue-50 text-blue-600'
+              : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+      Settings
+    </button>
+  </div>
+
+  <!-- Right actions -->
+  <div class="flex items-center gap-1 ml-auto md:ml-4">
+    <!-- Refresh (courses view) -->
+    <button x-show="view === 'courses'" @click="refresh()"
+            class="p-2 text-gray-400 hover:text-blue-600">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M4 4v5h4.5M20 20v-5h-4.5M4.5 9A8 8 0 0119.5 15M19.5 15A8 8 0 014.5 9"/>
+      </svg>
+    </button>
+    <!-- Edit (detail view, desktop) -->
+    <button x-show="view === 'detail' && currentLecture?.transcript"
+            @click="showTranscript = !showTranscript"
+            class="hidden md:block text-sm bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-200"
+            x-text="showTranscript ? '切换到摘要' : '切换到转录'">
+    </button>
+    <button x-show="view === 'detail' && currentLecture?.state === 'ready'"
+            @click="startEdit()"
+            class="hidden md:block text-sm bg-blue-500 text-white px-3 py-1.5 rounded-lg hover:bg-blue-600">
+      Edit
+    </button>
+  </div>
+</header>
+
+<!-- Mobile bottom nav (hidden on desktop) -->
+<nav x-show="['courses','lectures','detail','search','settings'].includes(view)"
+     class="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 safe-bottom z-30">
+  <div class="flex justify-around py-2">
+    <button @click="_go('courses')" class="flex flex-col items-center gap-0.5 px-4 py-1"
+            :class="['courses','lectures','detail'].includes(view) ? 'text-blue-600' : 'text-gray-400'">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
+      </svg>
+      <span class="text-[10px]">Courses</span>
+    </button>
+    <button @click="_go('search')" class="flex flex-col items-center gap-0.5 px-4 py-1"
+            :class="view === 'search' ? 'text-blue-600' : 'text-gray-400'">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <span class="text-[10px]">Search</span>
+    </button>
+    <button @click="openSettings()" class="flex flex-col items-center gap-0.5 px-4 py-1"
+            :class="view === 'settings' ? 'text-blue-600' : 'text-gray-400'">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round"
+              d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+      <span class="text-[10px]">Settings</span>
+    </button>
+  </div>
+</nav>
+
+<!-- ╔══════════════════════════════════════╗
+     ║  MAIN CONTENT AREA                   ║
+     ╚══════════════════════════════════════╝ -->
+<main class="flex-1 overflow-y-auto pb-20 md:pb-6">
+
+  <!-- ─── LOADING ─── -->
+  <div x-show="view === 'loading'" class="flex flex-col items-center justify-center h-[60vh] gap-4">
+    <div class="spinner"></div>
+    <p class="text-gray-500 text-sm" x-text="loadingMsg"></p>
+  </div>
+
+  <!-- ─── ERROR ─── -->
+  <div x-show="view === 'error'" class="max-w-lg mx-auto p-6 mt-12 text-center">
+    <div class="text-red-500 text-5xl mb-4">!</div>
+    <h2 class="text-lg font-bold text-gray-800 mb-2">Failed to load</h2>
+    <p class="text-sm text-red-600 mb-6 break-words" x-text="error"></p>
+    <div class="flex flex-col gap-3 items-center">
+      <button @click="refresh()" class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 text-sm">
+        Retry
+      </button>
+      <button @click="view = 'setup'" class="text-sm text-gray-500 underline">
+        Re-enter credentials
+      </button>
+    </div>
+  </div>
+
+  <!-- ─── SETUP WIZARD ─── -->
+  <div x-show="view === 'setup'" class="max-w-md mx-auto p-6 mt-8">
+    <h2 class="text-xl font-bold text-gray-800 mb-1">iCourse Subscriber</h2>
+    <p class="text-sm text-gray-500 mb-6">Enter your credentials to connect to your encrypted database.</p>
+
+    <div class="space-y-4">
+      <!-- Repo info -->
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Repo Owner</label>
+          <input x-model="repoOwner" type="text" placeholder="username"
+                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Repo Name</label>
+          <input x-model="repoName" type="text" placeholder="Fudan_iCourse_Subscriber"
+                 class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        </div>
+      </div>
+
+      <!-- GitHub PAT -->
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">
+          GitHub Fine-grained PAT
+          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank"
+             class="text-blue-500 underline ml-1">Create</a>
+        </label>
+        <input x-model="setup.token" type="password" placeholder="github_pat_..."
+               class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        <p class="text-xs text-gray-400 mt-1">Scope: this repo only, Contents: Read and Write</p>
+      </div>
+
+      <!-- 4 Secrets -->
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">STUID (Student ID)</label>
+        <input x-model="setup.stuid" type="text" placeholder="22307110xxx"
+               class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">UISPSW (UIS Password)</label>
+        <input x-model="setup.uispsw" type="password"
+               class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">DASHSCOPE_API_KEY</label>
+        <input x-model="setup.dashscope" type="password" placeholder="sk-..."
+               class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">SMTP_PASSWORD (QQ authorization code)</label>
+        <input x-model="setup.smtp" type="password"
+               class="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
+      </div>
+
+      <!-- Advanced -->
+      <details class="text-sm">
+        <summary class="text-gray-400 cursor-pointer">Advanced</summary>
+        <div class="mt-2 grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Data Branch</label>
+            <input x-model="dataBranch" type="text"
+                   class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">PBKDF2 Iterations</label>
+            <input x-model.number="iterations" type="number"
+                   class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+          </div>
+        </div>
+      </details>
+
+      <!-- Error -->
+      <p x-show="setupError" x-text="setupError" class="text-sm text-red-600 bg-red-50 rounded-lg p-3"></p>
+
+      <!-- Submit -->
+      <button @click="testAndSave()" :disabled="setupTesting"
+              class="w-full bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2">
+        <div x-show="setupTesting" class="spinner !w-4 !h-4 !border-2 !border-white/30 !border-t-white"></div>
+        <span x-text="setupTesting ? 'Testing connection…' : 'Connect'"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ─── COURSES ─── -->
+  <div x-show="view === 'courses'" class="view-enter max-w-2xl mx-auto p-4">
+    <!-- Empty state -->
+    <div x-show="courses.length === 0" class="text-center py-16 text-gray-400">
+      <p class="text-lg mb-2">No courses yet</p>
+      <p class="text-sm">Make sure the workflow has run at least once.</p>
+    </div>
+
+    <!-- Course cards -->
+    <div class="space-y-3">
+      <template x-for="c in courses" :key="c.course_id">
+        <button @click="openCourse(c.course_id)"
+                class="w-full text-left bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md transition-shadow active:bg-gray-50">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h3 class="font-semibold text-gray-800 truncate" x-text="c.title"></h3>
+              <p class="text-sm text-gray-500 mt-0.5" x-text="c.teacher"></p>
+            </div>
+            <div class="flex flex-col items-end flex-shrink-0">
+              <span class="text-xs font-medium bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full"
+                    x-text="c.summary_count + '/' + c.total_count + ' summaries'"></span>
+              <span class="text-xs text-gray-400 mt-1" x-text="relTime(c.last_updated)"></span>
+            </div>
+          </div>
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <!-- ─── LECTURES ─── -->
+  <div x-show="view === 'lectures'" class="view-enter max-w-2xl mx-auto p-4">
+    <p x-show="currentCourse?.teacher" class="text-sm text-gray-500 mb-3" x-text="currentCourse?.teacher"></p>
+
+    <div x-show="lectures.length === 0" class="text-center py-16 text-gray-400">
+      <p>No lectures recorded yet.</p>
+    </div>
+
+    <div class="space-y-2">
+      <template x-for="lec in lectures" :key="lec.sub_id">
+        <button @click="lec.state === 'ready' && openLecture(lec.sub_id)"
+                :class="lec.state === 'ready' ? 'hover:shadow-md active:bg-gray-50 cursor-pointer' : 'opacity-60 cursor-default'"
+                class="w-full text-left bg-white rounded-lg border border-gray-100 p-3.5 transition-shadow">
+          <div class="flex items-center justify-between gap-2">
+            <h4 class="font-medium text-gray-800 text-sm truncate" x-text="lec.sub_title || 'Untitled'"></h4>
+            <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full"
+                  :class="{
+                    'badge-ready': lec.state === 'ready',
+                    'badge-processing': lec.state === 'processing',
+                    'badge-waiting': lec.state === 'waiting',
+                    'badge-failed': lec.state === 'failed'
+                  }"
+                  x-text="lec.state === 'ready' ? 'Ready' :
+                          lec.state === 'processing' ? 'Summarizing…' :
+                          lec.state === 'waiting' ? 'Waiting' :
+                          'Failed: ' + (lec.error_stage || 'unknown')"></span>
+          </div>
+          <!-- Preview snippet for ready lectures -->
+          <p x-show="lec.state === 'ready' && lec.summary"
+             class="text-xs text-gray-400 mt-1.5 line-clamp-2"
+             x-text="snippet(lec.summary, 100)"></p>
+          <!-- Error detail -->
+          <p x-show="lec.state === 'failed' && lec.error_msg"
+             class="text-xs text-red-400 mt-1 truncate" x-text="lec.error_msg"></p>
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <!-- ─── DETAIL (read mode) ─── -->
+  <div x-show="view === 'detail'" class="view-enter max-w-2xl mx-auto p-4">
+    <template x-if="currentLecture">
+      <div>
+        <!-- Metadata -->
+        <p x-show="!showTranscript && currentLecture.summary_model"
+           class="text-xs text-gray-400 mb-4">
+          Generated by <span x-text="currentLecture.summary_model"></span>
+        </p>
+
+        <!-- Rendered summary -->
+        <div x-show="!showTranscript"
+             class="prose"
+             x-html="renderMd(currentLecture.summary || '')"
+             x-effect="!showTranscript && currentLecture && $nextTick(() => activateKaTeX($el))">
+        </div>
+
+        <!-- Transcript -->
+        <div x-show="showTranscript"
+             class="prose whitespace-pre-wrap text-sm text-gray-700"
+             x-text="currentLecture.transcript || ''">
+        </div>
+
+        <!-- Mobile toggle button -->
+        <button x-show="currentLecture.transcript"
+                @click="showTranscript = !showTranscript"
+                class="md:hidden fixed left-5 bottom-24 text-xs bg-gray-100 text-gray-700 px-3 py-2 rounded-full shadow hover:bg-gray-200 z-20"
+                x-text="showTranscript ? '切换到摘要' : '切换到转录'">
+        </button>
+
+        <!-- FAB edit button (mobile) -->
+        <button x-show="currentLecture.state === 'ready'"
+                @click="startEdit()"
+                class="md:hidden fixed right-5 bottom-24 w-14 h-14 bg-blue-500 text-white rounded-full shadow-lg flex items-center justify-center hover:bg-blue-600 active:scale-95 z-20">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/>
+          </svg>
+        </button>
+      </div>
+    </template>
+  </div>
+
+  <!-- ─── EDIT ─── -->
+  <div x-show="view === 'edit'" class="fixed inset-0 z-40 bg-white flex flex-col">
+    <!-- Edit top bar -->
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+      <button @click="cancelEdit()" class="text-sm text-gray-600 hover:text-gray-900">Cancel</button>
+      <button @click="editPreview = !editPreview"
+              class="text-sm font-medium"
+              :class="editPreview ? 'text-blue-600' : 'text-gray-500'"
+              x-text="editPreview ? 'Editor' : 'Preview'"></button>
+      <button @click="saveEdit()" :disabled="saving"
+              class="text-sm font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50">
+        <span x-show="!saving">Save</span>
+        <span x-show="saving">Saving…</span>
+      </button>
+    </div>
+    <!-- Editor -->
+    <div x-show="!editPreview" class="flex-1 overflow-hidden">
+      <textarea x-model="editText"
+                class="edit-textarea w-full h-full p-4 resize-none focus:outline-none"
+                placeholder="Markdown content…"></textarea>
+    </div>
+    <!-- Preview -->
+    <div x-show="editPreview" class="flex-1 overflow-y-auto p-4">
+      <div class="prose max-w-2xl mx-auto"
+           x-html="renderMd(editText)"
+           x-effect="editPreview && (editText, $nextTick(() => activateKaTeX($el)))">
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── SEARCH ─── -->
+  <div x-show="view === 'search'" class="view-enter max-w-2xl mx-auto p-4">
+    <div class="relative mb-4">
+      <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <input x-model="searchQuery" @input="doSearch()" type="text"
+             placeholder="Search summaries…" autofocus
+             class="w-full pl-10 pr-4 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+    </div>
+
+    <div x-show="searchQuery && searchResults.length === 0" class="text-center py-12 text-gray-400 text-sm">
+      No results.
+    </div>
+
+    <div class="space-y-2">
+      <template x-for="r in searchResults" :key="r.sub_id">
+        <button @click="openLecture(r.sub_id)"
+                class="w-full text-left bg-white rounded-lg border border-gray-100 p-3 hover:shadow-md transition-shadow active:bg-gray-50">
+          <p class="text-xs text-blue-600 font-medium" x-text="r.course_title"></p>
+          <h4 class="font-medium text-gray-800 text-sm mt-0.5" x-text="r.sub_title || 'Untitled'"></h4>
+          <p class="text-xs text-gray-400 mt-1 line-clamp-2" x-html="highlight(r.summary, searchQuery)"></p>
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <!-- ─── SETTINGS ─── -->
+  <div x-show="view === 'settings'" class="view-enter max-w-md mx-auto p-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-4">Credentials</h2>
+
+    <div class="space-y-3">
+      <template x-for="field in [
+        {key: 'token', label: 'GitHub PAT'},
+        {key: 'stuid', label: 'STUID'},
+        {key: 'uispsw', label: 'UISPSW'},
+        {key: 'dashscope', label: 'DASHSCOPE_API_KEY'},
+        {key: 'smtp', label: 'SMTP_PASSWORD'}
+      ]" :key="field.key">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1" x-text="field.label"></label>
+          <div class="flex gap-2">
+            <input :type="showSecrets[field.key] ? 'text' : 'password'"
+                   x-model="settingsForm[field.key]"
+                   class="flex-1 border rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-300 focus:outline-none">
+            <button @click="showSecrets[field.key] = !showSecrets[field.key]"
+                    class="text-xs text-gray-400 hover:text-gray-600 w-10"
+                    x-text="showSecrets[field.key] ? 'Hide' : 'Show'"></button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <h2 class="text-lg font-bold text-gray-800 mt-8 mb-4">Advanced</h2>
+    <div class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Repo Owner</label>
+          <input x-model="repoOwner" type="text" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Repo Name</label>
+          <input x-model="repoName" type="text" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Data Branch</label>
+          <input x-model="dataBranch" type="text" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">PBKDF2 Iterations</label>
+          <input x-model.number="iterations" type="number" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-300 focus:outline-none">
+        </div>
+      </div>
+    </div>
+
+    <button @click="saveSettingsAndReload()"
+            class="w-full mt-6 bg-blue-500 text-white py-2.5 rounded-lg font-medium hover:bg-blue-600">
+      Save &amp; Reload
+    </button>
+
+    <div class="mt-8 pt-6 border-t border-gray-200">
+      <button @click="clearAllData()"
+              class="w-full text-sm text-red-500 hover:text-red-700 py-2">
+        Clear all credentials
+      </button>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── TOAST ── -->
+<div x-show="toast" x-transition.opacity
+     class="toast"
+     :class="toastType === 'error' ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'"
+     x-text="toast"></div>
+
+<!-- ╔══════════════════════════════════════╗
+     ║  CDN SCRIPTS                         ║
+     ╚══════════════════════════════════════╝ -->
+<!-- sql.js (provides window.initSqlJs) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.12.0/sql-wasm.js"></script>
+<!-- marked.js (provides window.marked) -->
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<!-- DOMPurify (provides window.DOMPurify) -->
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<!-- KaTeX + auto-render -->
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"></script>
+<!-- App scripts (defer, in order, before Alpine) -->
+<script defer src="js/crypto.js"></script>
+<script defer src="js/github.js"></script>
+<script defer src="js/db.js"></script>
+<script defer src="js/render.js"></script>
+<script defer src="js/app.js"></script>
+<!-- Alpine.js LAST — auto-starts after all defer scripts -->
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+
+</body>
+</html>
